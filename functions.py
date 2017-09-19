@@ -595,7 +595,8 @@ def get_round_selections(evaluated_set_X,evaluated_set_y,
 
 def get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
                            unevaluated_X,
-                           number_of_new_labels):
+                           number_of_new_labels,
+                           _KRIGING = 0):
     """ Get a set of parameter combinations according to their predicted label entropy
     
     
