@@ -33,16 +33,16 @@ on the full space of unevaluated parameter combinations. In the case of the
 proposed procedure, this full space is approximated by the randomly selected 
 pool.
 """
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
 
 """ performance metric """
 # Mean Squared Error
-from sklearn.metrics import mean_squared_error, precision_score
+from sklearn.metrics import mean_squared_error, precision_score, median_absolute_error, f1_score
 
 """ Algorithm Tuning Constants """
-_N_EVALS = 25
-_N_SPLITS = 5
-
+_N_EVALS = 200
+_N_SPLITS = 10
+_CALIBRATION_THRESHOLD = 1
 
 # Functions
 from time import time
@@ -315,12 +315,12 @@ def set_surrogate_as_gbt():
     surrogate_model = XGBRegressor(seed=0)
 
     surrogate_parameter_space = [
-        (100, 1000), # n_estimators
-        (0.000001, 1), # learning_rate
+        (25, 100), # n_estimators
+        (0.001, 1), # learning_rate
         (1, 100), # max_depth
-        (0.0, 100), # reg_alpha
-        (0.0, 100), # reg_lambda
-        (1, 1000)] # scale_pos_weight
+        (0.0, 1), # reg_alpha
+        (0.0, 1), # reg_lambda
+        (0.5, 1.0)] # subsample
         
     return surrogate_model, surrogate_parameter_space
 
@@ -357,6 +357,13 @@ def set_surrogate_as_gpr():
     
     return surrogate_model, surrogate_parameter_space
 
+def custom_metric_regression(y_hat, y):
+#     return 'MSE', median_absolute_error(y.get_label(), y_hat)
+    return 'MSE', mean_squared_error(y.get_label(), y_hat)
+
+def custom_metric_binary(y_hat, y):
+    return 'MSE', f1_score(y.get_label(), y_hat, average='weighted')
+
 def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
     """ Fit a surrogate model to the X,y parameter combinations
     
@@ -376,22 +383,26 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
     
     """
     def objective(params):
-        n_estimators, learning_rate, max_depth, reg_alpha, reg_lambda,  \
-            scale_pos_weight = params
+        n_estimators, learning_rate, max_depth, reg_alpha, \
+        reg_lambda, subsample = params
 
         reg = XGBRegressor( n_estimators=n_estimators,
                             learning_rate=learning_rate,
                             max_depth=max_depth,
                             reg_alpha=reg_alpha,
                             reg_lambda=reg_lambda,
-                            scale_pos_weight=scale_pos_weight,
+                            subsample=subsample,
                             seed=0)
         
-        return -np.mean(cross_val_score(reg, 
+        kf = KFold(n_splits=_N_SPLITS,random_state=0,shuffle=True)
+        kf_cv = [(train,test) for train,test in kf.split(X,y)] 
+            
+        return -np.max(cross_val_score(reg, 
                                         X, y, 
-                                        cv=_N_SPLITS, 
-                                        n_jobs=-1,
-                                        scoring="neg_mean_squared_error"))
+                                        cv=kf_cv, 
+                                        n_jobs=1,
+                                        fit_params={'eval_metric':custom_metric_regression},
+                                        scoring="neg_median_absolute_error"))
 
     from skopt import gp_minimize    
 
@@ -400,8 +411,9 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
     surrogate_model_tuned = gp_minimize(objective, 
                                         surrogate_parameter_space, 
                                         n_calls=_N_EVALS,
-                                        n_points=100000,
-                                        n_jobs=1,
+                                        n_restarts_optimizer=100,
+                                        acq_func="LCB",
+                                        n_jobs=-1,
                                         random_state=0)
 
     surrogate_model.set_params(n_estimators=surrogate_model_tuned.x[0],
@@ -409,14 +421,14 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
                                max_depth=surrogate_model_tuned.x[2],
                                reg_alpha=surrogate_model_tuned.x[3],
                                reg_lambda=surrogate_model_tuned.x[4],
-                               scale_pos_weight=surrogate_model_tuned.x[5],
+                               subsample=surrogate_model_tuned.x[5],
                                seed=0)
 
-    surrogate_model.fit(X,y)
+    surrogate_model.fit(X,y,eval_metric=custom_metric_regression)
     
     return surrogate_model
 
-def fit_entropy_classifier(X,y, surrogate_model, surrogate_parameter_space):
+def fit_entropy_classifier(X,y,calibration_threshold):
     """ Fit a surrogate model to the X,y parameter combinations
     
     Parameters
@@ -434,27 +446,30 @@ def fit_entropy_classifier(X,y, surrogate_model, surrogate_parameter_space):
     surrogate_model_fitted : A surrogate model fitted 
     
     """
-    y_binary = calibration_condition(evaluated_set_y,calibration_threshold)
+    y_binary = calibration_condition(y,calibration_threshold)
+    _, surrogate_parameter_space = set_surrogate_as_gbt()
     
     def objective(params):
-        n_estimators, learning_rate, max_depth, reg_alpha, reg_lambda,  \
-            scale_pos_weight = params
+        n_estimators, learning_rate, max_depth, reg_alpha, \
+        reg_lambda, subsample = params
 
         clf = XGBClassifier(n_estimators=n_estimators,
                             learning_rate=learning_rate,
                             max_depth=max_depth,
                             reg_alpha=reg_alpha,
                             reg_lambda=reg_lambda,
-                            scale_pos_weight=scale_pos_weight,
-                            seed=0)
+                            subsample=subsample,
+                            seed=0,
+                            objective="binary:logistic")
                 
-        skf = StratifiedKFold(n_splits=_N_SPLITS,random_state=0,shuffle=False)
+        skf = StratifiedKFold(n_splits=_N_SPLITS,random_state=0,shuffle=True)
         skf_cv = [(train,test) for train,test in skf.split(X,y_binary)]        
 
-        return -np.mean(cross_val_score(clf, 
+        return -np.max(cross_val_score(clf, 
                                         X, y_binary, 
                                         cv=skf_cv, 
-                                        n_jobs=-1,
+                                        n_jobs=1,
+                                        fit_params={'eval_metric':custom_metric_binary},
                                         scoring="f1_weighted"))
 
     from skopt import gp_minimize    
@@ -463,9 +478,10 @@ def fit_entropy_classifier(X,y, surrogate_model, surrogate_parameter_space):
     # use Gaussian Process Regression to optimize the Hyper-Parameters.
     clf_tuned = gp_minimize(objective, 
                             surrogate_parameter_space, 
-                            n_calls=_N_EVALS, 
-                            n_points=100000,
-                            n_jobs=1,
+                            n_calls=_N_EVALS,
+                            n_restarts_optimizer=100,
+                            acq_func="LCB",
+                            n_jobs=-1, 
                             random_state=0)
 
     clf = XGBClassifier(n_estimators=clf_tuned.x[0],
@@ -473,10 +489,10 @@ def fit_entropy_classifier(X,y, surrogate_model, surrogate_parameter_space):
                         max_depth=clf_tuned.x[2],
                         reg_alpha=clf_tuned.x[3],
                         reg_lambda=clf_tuned.x[4],
-                        scale_pos_weight=clf_tuned.x[5],
+                        subsample=clf_tuned.x[5],
                         seed=0)
     
-    clf.fit(X,y_binary)
+    clf.fit(X,y_binary,eval_metric=custom_metric_binary)
     
     return clf
 
@@ -526,7 +542,7 @@ def run_online_surrogate(budget, n_dimensions, islands_exploration_range, calibr
                 evaluated_set_X,evaluated_set_y,
                 unevaluated_set_X,
                 predicted_positives, num_predicted_positives,
-                samples_to_select,
+                samples_to_select, calibration_threshold,
                 budget)
 
     # 6. Output Final Surrogate Model
@@ -557,7 +573,7 @@ def get_sobol_samples(n_dimensions, samples, parameter_support):
 def get_round_selections(evaluated_set_X,evaluated_set_y,
                          unevaluated_set_X,
                          predicted_positives, num_predicted_positives,
-                         samples_to_select,
+                         samples_to_select, calibration_threshold,
                          budget):
     """
     
@@ -580,7 +596,8 @@ def get_round_selections(evaluated_set_X,evaluated_set_y,
         
         selections = np.append(selections,
                                get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
-                                                      unevaluated_set_X,
+                                                      unevaluated_set_X, 
+                                                      calibration_threshold,
                                                       budget_shortfall))
 
     else: # if we don't have any predicted positive calibrations
@@ -594,20 +611,18 @@ def get_round_selections(evaluated_set_X,evaluated_set_y,
     return evaluated_set_X, evaluated_set_y, unevaluated_set_X
 
 def get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
-                           unevaluated_X,
-                           number_of_new_labels,
-                           _KRIGING = 0):
+                           unevaluated_X, calibration_threshold,
+                           number_of_new_labels):
     """ Get a set of parameter combinations according to their predicted label entropy
     
     
     
-    """
-    if _KRIGING:
-        clf = GaussianProcessClassifier()
-        clf.fit(evaluated_set_X,calibration_condition(evaluated_set_y,calibration_threshold))
-    else:
-        clf = fit_entropy_classifier(evaluated_set_X,evaluated_set_y, 
-                                     surrogate_model, surrogate_parameter_space)
+    """    
+#     if _KRIGING:
+#         clf = GaussianProcessClassifier()
+#         clf.fit(evaluated_set_X,calibration_condition(evaluated_set_y,calibration_threshold))
+#     else:
+    clf = fit_entropy_classifier(evaluated_set_X,evaluated_set_y,calibration_threshold)
 
     y_hat_probability = clf.predict_proba(unevaluated_X)
     y_hat_entropy = np.array(map(entropy,y_hat_probability))
