@@ -411,7 +411,6 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
     surrogate_model_tuned = gp_minimize(objective, 
                                         surrogate_parameter_space, 
                                         n_calls=_N_EVALS,
-                                        n_restarts_optimizer=100,
                                         acq_func="LCB",
                                         n_jobs=-1,
                                         random_state=0)
@@ -479,7 +478,6 @@ def fit_entropy_classifier(X,y,calibration_threshold):
     clf_tuned = gp_minimize(objective, 
                             surrogate_parameter_space, 
                             n_calls=_N_EVALS,
-                            n_restarts_optimizer=100,
                             acq_func="LCB",
                             n_jobs=-1, 
                             random_state=0)
