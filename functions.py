@@ -1,4 +1,5 @@
 
+
 """ Ignore Warnings """
 def warn(*args, **kwargs):
     pass
@@ -16,9 +17,9 @@ from scipy.stats.distributions import entropy
 from xgboost import XGBRegressor, XGBClassifier
 
 # Gaussian Process Regression (Kriging)
-import pyKriging  
-from pyKriging.krige import kriging  
-from pyKriging.samplingplan import samplingplan
+# modified version of kriging to make a fair comparison with regard
+# to the number of hyperparameter evaluations
+from pyKriging.krige import kriging
 
 """ cross-validation
 Cross validation is used in each of the rounds to approximate the selected 
@@ -34,6 +35,10 @@ proposed procedure, this full space is approximated by the randomly selected
 pool.
 """
 from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
+from skopt import gp_minimize
+
+import matplotlib.pylab as plt
+import seaborn as sns
 
 """ performance metric """
 # Mean Squared Error
@@ -41,8 +46,8 @@ from sklearn.metrics import mean_squared_error, precision_score, median_absolute
 
 """ Algorithm Tuning Constants """
 _N_EVALS = 200
-_N_SPLITS = 10
-_CALIBRATION_THRESHOLD = 1
+_N_SPLITS = 3
+_CALIBRATION_THRESHOLD = 1.00
 
 # Functions
 from time import time
@@ -315,8 +320,8 @@ def set_surrogate_as_gbt():
     surrogate_model = XGBRegressor(seed=0)
 
     surrogate_parameter_space = [
-        (25, 100), # n_estimators
-        (0.001, 1), # learning_rate
+        (100, 200), # n_estimators
+        (0.1, 1), # learning_rate
         (1, 100), # max_depth
         (0.0, 1), # reg_alpha
         (0.0, 1), # reg_lambda
@@ -364,7 +369,7 @@ def custom_metric_regression(y_hat, y):
 def custom_metric_binary(y_hat, y):
     return 'MSE', f1_score(y.get_label(), y_hat, average='weighted')
 
-def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
+def fit_surrogate_model(X,y):
     """ Fit a surrogate model to the X,y parameter combinations
     
     Parameters
@@ -382,6 +387,8 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
     surrogate_model_fitted : A surrogate model fitted 
     
     """
+    surrogate_model, surrogate_parameter_space = set_surrogate_as_gbt()
+    
     def objective(params):
         n_estimators, learning_rate, max_depth, reg_alpha, \
         reg_lambda, subsample = params
@@ -397,12 +404,12 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
         kf = KFold(n_splits=_N_SPLITS,random_state=0,shuffle=True)
         kf_cv = [(train,test) for train,test in kf.split(X,y)] 
             
-        return -np.max(cross_val_score(reg, 
+        return -np.mean(cross_val_score(reg, 
                                         X, y, 
                                         cv=kf_cv, 
                                         n_jobs=1,
                                         fit_params={'eval_metric':custom_metric_regression},
-                                        scoring="neg_median_absolute_error"))
+                                        scoring="neg_mean_squared_error"))
 
     from skopt import gp_minimize    
 
@@ -411,7 +418,6 @@ def fit_surrogate_model(X,y, surrogate_model, surrogate_parameter_space):
     surrogate_model_tuned = gp_minimize(objective, 
                                         surrogate_parameter_space, 
                                         n_calls=_N_EVALS,
-                                        acq_func="LCB",
                                         n_jobs=-1,
                                         random_state=0)
 
@@ -464,21 +470,18 @@ def fit_entropy_classifier(X,y,calibration_threshold):
         skf = StratifiedKFold(n_splits=_N_SPLITS,random_state=0,shuffle=True)
         skf_cv = [(train,test) for train,test in skf.split(X,y_binary)]        
 
-        return -np.max(cross_val_score(clf, 
+        return -np.mean(cross_val_score(clf, 
                                         X, y_binary, 
                                         cv=skf_cv, 
                                         n_jobs=1,
                                         fit_params={'eval_metric':custom_metric_binary},
-                                        scoring="f1_weighted"))
-
-    from skopt import gp_minimize    
+                                        scoring="f1_weighted"))  
 
     # We assume the surrogate model parameter space is smooth, so we 
     # use Gaussian Process Regression to optimize the Hyper-Parameters.
     clf_tuned = gp_minimize(objective, 
                             surrogate_parameter_space, 
                             n_calls=_N_EVALS,
-                            acq_func="LCB",
                             n_jobs=-1, 
                             random_state=0)
 
@@ -495,7 +498,7 @@ def fit_entropy_classifier(X,y,calibration_threshold):
     return clf
 
 def run_online_surrogate(budget, n_dimensions, islands_exploration_range, calibration_threshold):
-    print "XGBoost Started!"
+#     print "XGBoost Started!"
     # 1. Draw the Pool
     # Set pool size
     pool_size = 1000000
@@ -508,9 +511,10 @@ def run_online_surrogate(budget, n_dimensions, islands_exploration_range, calibr
 
     # Set number of selections per round
     samples_to_select = np.ceil(np.log(pool_size)).astype(int)
+    samples_to_initialize = np.ceil(np.sqrt(budget)).astype(int)
 
     # Set initialization samples
-    initialization_samples = np.random.permutation(pool_size)[:samples_to_select]
+    initialization_samples = np.random.permutation(pool_size)[:samples_to_initialize]
 
     # Evaluate Initialization Set
     evaluated_set_X = pool[initialization_samples]
@@ -520,14 +524,11 @@ def run_online_surrogate(budget, n_dimensions, islands_exploration_range, calibr
     unevaluated_set_X = pool[list(set(range(pool_size)) - set(initialization_samples))]
 
     surrogate_model, surrogate_parameter_space = set_surrogate_as_gbt()
-    print "Evaluated set size: ", evaluated_set_y.shape[0]
+#     print "Evaluated set size: ", evaluated_set_y.shape[0]
 
     while evaluated_set_y.shape[0] < budget:
         # 3. Build Surrogate on evaluated samples
-        surrogate_model_this_round = fit_surrogate_model( \
-            evaluated_set_X,evaluated_set_y,
-            surrogate_model=surrogate_model,
-            surrogate_parameter_space=surrogate_parameter_space)
+        surrogate_model_this_round = fit_surrogate_model(evaluated_set_X,evaluated_set_y) 
 
         # 4. Predict Response over Pool
         predict_response_pool = surrogate_model_this_round.predict(unevaluated_set_X)
@@ -544,9 +545,61 @@ def run_online_surrogate(budget, n_dimensions, islands_exploration_range, calibr
                 budget)
 
     # 6. Output Final Surrogate Model
-    surrogate_model = fit_surrogate_model(evaluated_set_X,evaluated_set_y,
-                               surrogate_model=surrogate_model,
-                               surrogate_parameter_space=surrogate_parameter_space)
+    surrogate_model = fit_surrogate_model(evaluated_set_X,evaluated_set_y) 
+
+    return surrogate_model, evaluated_set_X, evaluated_set_y
+
+def run_online_surrogate_classifier(budget, n_dimensions, islands_exploration_range, calibration_threshold):
+#     print "XGBoost Started!"
+    # 1. Draw the Pool
+    # Set pool size
+    pool_size = 1000000
+
+    # Draw Pool
+    pool = get_sobol_samples(n_dimensions, pool_size, islands_exploration_range)
+
+    # 2. Randomly Draw and Evaluate Initialization Set
+    # Draw the initialization set from the pool as a permutation of the pool index.
+
+    # Set number of selections per round
+    samples_to_select = np.ceil(np.log(pool_size)).astype(int)
+    samples_to_initialize = np.ceil(np.sqrt(budget)).astype(int)
+
+    # Set initialization samples
+    initialization_samples = np.random.permutation(pool_size)[:samples_to_initialize]
+
+    # Evaluate Initialization Set
+    evaluated_set_X = pool[initialization_samples]
+    evaluated_set_y = evaluate_islands_on_set(evaluated_set_X)
+
+    # Update unevaluated_set_X
+    unevaluated_set_X = pool[list(set(range(pool_size)) - set(initialization_samples))]
+
+    surrogate_model, surrogate_parameter_space = set_surrogate_as_gbt()
+#     print "Evaluated set size: ", evaluated_set_y.shape[0]
+
+    while evaluated_set_y.shape[0] < budget:
+        # 3. Build Surrogate on evaluated samples
+        surrogate_model_this_round = fit_entropy_classifier( \
+            evaluated_set_X,evaluated_set_y,
+            calibration_threshold=calibration_threshold)
+
+        # 4. Predict Calibration Label over Pool
+        predicted_positives = surrogate_model_this_round.predict(unevaluated_set_X)
+        num_predicted_positives = predicted_positives.sum()
+
+        # 5. Select small subset of Pool for Evaluation
+        evaluated_set_X, evaluated_set_y, unevaluated_set_X = get_round_selections( \
+                evaluated_set_X,evaluated_set_y,
+                unevaluated_set_X,
+                predicted_positives, num_predicted_positives,
+                samples_to_select, calibration_threshold,
+                budget)
+
+    # 6. Output Final Surrogate Model
+    surrogate_model = fit_entropy_classifier(
+        evaluated_set_X,evaluated_set_y,
+        calibration_threshold=calibration_threshold)
 
     return surrogate_model, evaluated_set_X, evaluated_set_y
 
@@ -615,11 +668,7 @@ def get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
     
     
     
-    """    
-#     if _KRIGING:
-#         clf = GaussianProcessClassifier()
-#         clf.fit(evaluated_set_X,calibration_condition(evaluated_set_y,calibration_threshold))
-#     else:
+    """ 
     clf = fit_entropy_classifier(evaluated_set_X,evaluated_set_y,calibration_threshold)
 
     y_hat_probability = clf.predict_proba(unevaluated_X)
