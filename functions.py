@@ -1,5 +1,4 @@
 
-
 """ Ignore Warnings """
 def warn(*args, **kwargs):
     pass
@@ -45,9 +44,9 @@ import seaborn as sns
 from sklearn.metrics import mean_squared_error, precision_score, median_absolute_error, f1_score
 
 """ Algorithm Tuning Constants """
-_N_EVALS = 200
-_N_SPLITS = 3
-_CALIBRATION_THRESHOLD = 1.00
+_N_EVALS = 500
+_N_SPLITS = 5
+_CALIBRATION_THRESHOLD = 1.25
 
 # Functions
 from time import time
@@ -320,9 +319,9 @@ def set_surrogate_as_gbt():
     surrogate_model = XGBRegressor(seed=0)
 
     surrogate_parameter_space = [
-        (100, 200), # n_estimators
-        (0.1, 1), # learning_rate
-        (1, 100), # max_depth
+        (1, 1000), # n_estimators
+        (0.0001, 1), # learning_rate
+        (1, 1000), # max_depth
         (0.0, 1), # reg_alpha
         (0.0, 1), # reg_lambda
         (0.5, 1.0)] # subsample
@@ -407,7 +406,7 @@ def fit_surrogate_model(X,y):
         return -np.mean(cross_val_score(reg, 
                                         X, y, 
                                         cv=kf_cv, 
-                                        n_jobs=1,
+                                        n_jobs=-1,
                                         fit_params={'eval_metric':custom_metric_regression},
                                         scoring="neg_mean_squared_error"))
 
@@ -418,7 +417,8 @@ def fit_surrogate_model(X,y):
     surrogate_model_tuned = gp_minimize(objective, 
                                         surrogate_parameter_space, 
                                         n_calls=_N_EVALS,
-                                        n_jobs=-1,
+                                        acq_func='gp_hedge',
+                                        n_jobs=1,
                                         random_state=0)
 
     surrogate_model.set_params(n_estimators=surrogate_model_tuned.x[0],
@@ -473,7 +473,7 @@ def fit_entropy_classifier(X,y,calibration_threshold):
         return -np.mean(cross_val_score(clf, 
                                         X, y_binary, 
                                         cv=skf_cv, 
-                                        n_jobs=1,
+                                        n_jobs=-1,
                                         fit_params={'eval_metric':custom_metric_binary},
                                         scoring="f1_weighted"))  
 
@@ -482,7 +482,8 @@ def fit_entropy_classifier(X,y,calibration_threshold):
     clf_tuned = gp_minimize(objective, 
                             surrogate_parameter_space, 
                             n_calls=_N_EVALS,
-                            n_jobs=-1, 
+                            acq_func='gp_hedge',
+                            n_jobs=1, 
                             random_state=0)
 
     clf = XGBClassifier(n_estimators=clf_tuned.x[0],
@@ -510,8 +511,8 @@ def run_online_surrogate(budget, n_dimensions, islands_exploration_range, calibr
     # Draw the initialization set from the pool as a permutation of the pool index.
 
     # Set number of selections per round
-    samples_to_select = np.ceil(np.log(pool_size)).astype(int)
-    samples_to_initialize = np.ceil(np.sqrt(budget)).astype(int)
+    samples_to_select = np.ceil(np.log(budget)).astype(int)
+    samples_to_initialize = 100
 
     # Set initialization samples
     initialization_samples = np.random.permutation(pool_size)[:samples_to_initialize]
@@ -562,8 +563,8 @@ def run_online_surrogate_classifier(budget, n_dimensions, islands_exploration_ra
     # Draw the initialization set from the pool as a permutation of the pool index.
 
     # Set number of selections per round
-    samples_to_select = np.ceil(np.log(pool_size)).astype(int)
-    samples_to_initialize = np.ceil(np.sqrt(budget)).astype(int)
+    samples_to_select = np.ceil(np.log(budget)).astype(int)
+    samples_to_initialize = 100
 
     # Set initialization samples
     initialization_samples = np.random.permutation(pool_size)[:samples_to_initialize]
@@ -668,7 +669,11 @@ def get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
     
     
     
-    """ 
+    """    
+#     if _KRIGING:
+#         clf = GaussianProcessClassifier()
+#         clf.fit(evaluated_set_X,calibration_condition(evaluated_set_y,calibration_threshold))
+#     else:
     clf = fit_entropy_classifier(evaluated_set_X,evaluated_set_y,calibration_threshold)
 
     y_hat_probability = clf.predict_proba(unevaluated_X)

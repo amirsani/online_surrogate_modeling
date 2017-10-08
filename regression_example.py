@@ -1,4 +1,3 @@
-
 import matplotlib
 matplotlib.use('Agg')
 
@@ -8,23 +7,23 @@ from functions import *
 
 # ### Initialize the parameters and constants
 # Set the ABM Evaluation Budget
-budget = 1000
+budget = 500
 
 # Set out-of-sample test and montecarlo sizes
 test_size = 100
 montecarlos = 100
 
 # Set the Calibration Threshold
-_CALIBRATION_THRESHOLD = 1.0
+_CALIBRATION_THRESHOLD = 1.25
 
 # Set the ABM parameters and support
 islands_exploration_range = np.array([        
-    (0,10), # rho
-    (0.8,2), # alpha
+    (0.0,10), # rho
+    (0.8,2.0), # alpha
     (0.0,1.0), # phi
     (0.0,1.0), # pi                                     
     (0.0,1.0), # eps
-    (10,100), # N
+    (1,1000), # N
     (0.0,1.0)]) # Lambda
 
 param_dims = islands_exploration_range.shape[0]
@@ -49,7 +48,7 @@ print ("Number of positive calibrations available for training: ", (evaluated_se
 tic()
 surrogate_models_kriging = kriging(evaluated_set_X_batch, evaluated_set_y_batch, random_state=0)
 surrogate_models_kriging.train()
-print ("Time: ", toc())
+print ("Kriging Time: ", toc())
 
 # ## XGBoost Surrogate
 # This surrogate will not have multiple iterations. It will run on the entire budget of evaluations. Further, we use exactly the same optimizer and settings for Kriging and XGBoost.
