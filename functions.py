@@ -44,9 +44,9 @@ import seaborn as sns
 from sklearn.metrics import mean_squared_error, precision_score, median_absolute_error, f1_score
 
 """ Algorithm Tuning Constants """
-_N_EVALS = 500
-_N_SPLITS = 5
-_CALIBRATION_THRESHOLD = 1.25
+_N_EVALS = 100
+_N_SPLITS = 3
+_CALIBRATION_THRESHOLD = 1.00
 
 # Functions
 from time import time
@@ -58,15 +58,6 @@ def toc():
     return str(time() - startTime_for_tictoc)
 
 def evaluate_islands_on_set(parameter_combinations):
-    """
-    0,10), # rho
-    (0.8,2), # alpha
-    (0.0,1.0), # phi
-    (0.0,1.0), # pi                                     
-    (0.0,1.0), # eps
-    (10,100), # N
-    (0.0,1.0)]) # Lambda
-    """
     y = np.zeros(parameter_combinations.shape[0])
     num_params = parameter_combinations.shape[1]
     

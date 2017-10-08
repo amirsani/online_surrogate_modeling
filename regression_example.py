@@ -42,9 +42,11 @@ print ("Number of positive calibrations available for training: ", (evaluated_se
 # ## Kriging Surrogate
 # We use the standard settings in the pyKriging package. This includes 10,000 evaluations of their selected
 # optimizer, particle swarm optimization, for hyper-parameter estimation. We use a simple optimizer for our 
-# hyper-parameters. For an equivalent comparison, the same optimizer and settings should be used. We do not 
-# do this here because we depend on the pyKriging code and do not want to write our own kriging package. We
-# also want to avoid using specialized hyper-parameter optimizers to demonstrate performance.
+# hyper-parameters and only call it 100 times, so we don't expect to find the best hyperparameters. The aim
+# of this example is only to show how the code works. For an equivalent comparison, the same optimizer and 
+# settings should be used. We do not do this here because we depend on the pyKriging code and do not want
+# to write our own kriging package or setup a new hyperparameter optimizer. In the upcoming weeks, the
+# optimizers will be setup to match in settings for a comparison.
 tic()
 surrogate_models_kriging = kriging(evaluated_set_X_batch, evaluated_set_y_batch, random_state=0)
 surrogate_models_kriging.train()
