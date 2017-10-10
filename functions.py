@@ -11,6 +11,7 @@ import sobol_seq
 from scipy.stats.distributions import entropy
 import matplotlib.pylab as plt
 import seaborn as sns
+import numba
 
 """ surrogate models """
 # Xtreeme Gradient Boosted Decision Trees
@@ -42,17 +43,19 @@ from skopt import gp_minimize
 # Mean Squared Error
 from sklearn.metrics import mean_squared_error, f1_score
 
-""" Algorithm Tuning Constants """
-_N_EVALS = 100
+""" Defaults Algorithm Tuning Constants """
+_N_EVALS = 10
 _N_SPLITS = 5
 _CALIBRATION_THRESHOLD = 1.00
 
-# Functions
+""" Functions """
+numba.jit()
 def unique_rows(a):
     a = np.ascontiguousarray(a)
     unique_a = np.unique(a.view([('', a.dtype)] * a.shape[1]))
     return unique_a.view(a.dtype).reshape((unique_a.shape[0], a.shape[1]))
 
+numba.jit()
 def evaluate_islands_on_set(parameter_combinations):
     y = np.zeros(parameter_combinations.shape[0])
     num_params = parameter_combinations.shape[1]
@@ -88,7 +91,7 @@ def evaluate_islands_on_set(parameter_combinations):
 
     return y
 
-
+numba.jit()
 def island_abm(rho=0.01,
                alpha=1.5,
                phi=0.4,
@@ -237,7 +240,7 @@ def island_abm(rho=0.01,
 
     return log_GDP
 
-
+numba.jit()
 def calibration_measure(log_GDP):
     """ Calibration Measure
 
@@ -263,11 +266,11 @@ def calibration_measure(log_GDP):
 
     return GDP_growth_rate
 
-
+numba.jit()
 def calibration_condition(average_GDP_growth_rate, threshold_condition):
     return average_GDP_growth_rate >= threshold_condition
 
-
+numba.jit()
 def set_surrogate_as_gbt():
     """ Set the surrogate model as Gradient Boosted Decision Trees
     Helper function to set the surrogate model and parameter space
@@ -305,15 +308,15 @@ def set_surrogate_as_gbt():
 
     return surrogate_model, surrogate_parameter_space
 
-
+numba.jit()
 def custom_metric_regression(y_hat, y):
     return 'MSE', mean_squared_error(y.get_label(), y_hat)
 
-
+numba.jit()
 def custom_metric_binary(y_hat, y):
     return 'MSE', f1_score(y.get_label(), y_hat, average='weighted')
 
-
+numba.jit()
 def fit_surrogate_model(X, y):
     """ Fit a surrogate model to the X,y parameter combinations
 
@@ -352,7 +355,7 @@ def fit_surrogate_model(X, y):
         return -np.mean(cross_val_score(reg,
                                         X, y,
                                         cv=kf_cv,
-                                        n_jobs=-1,
+                                        n_jobs=1,
                                         fit_params={'eval_metric': custom_metric_regression},
                                         scoring="neg_mean_squared_error"))
 
@@ -361,7 +364,7 @@ def fit_surrogate_model(X, y):
                                         surrogate_parameter_space,
                                         n_calls=_N_EVALS,
                                         acq_func='gp_hedge',
-                                        n_jobs=1,
+                                        n_jobs=-1,
                                         random_state=0, verbose=9)
 
     surrogate_model.set_params(n_estimators=surrogate_model_tuned.x[0],
@@ -376,7 +379,7 @@ def fit_surrogate_model(X, y):
 
     return surrogate_model
 
-
+numba.jit()
 def fit_entropy_classifier(X, y, calibration_threshold):
     """ Fit a surrogate model to the X,y parameter combinations
 
@@ -417,7 +420,7 @@ def fit_entropy_classifier(X, y, calibration_threshold):
         return -np.mean(cross_val_score(clf,
                                         X, y_binary,
                                         cv=skf_cv,
-                                        n_jobs=-1,
+                                        n_jobs=1,
                                         fit_params={'eval_metric': custom_metric_binary},
                                         scoring="f1_weighted"))
 
@@ -426,7 +429,7 @@ def fit_entropy_classifier(X, y, calibration_threshold):
                             surrogate_parameter_space,
                             n_calls=_N_EVALS,
                             acq_func='gp_hedge',
-                            n_jobs=1,
+                            n_jobs=-1,
                             random_state=0)
 
     clf = XGBClassifier(n_estimators=clf_tuned.x[0],
@@ -441,6 +444,7 @@ def fit_entropy_classifier(X, y, calibration_threshold):
 
     return clf
 
+numba.jit()
 def get_sobol_samples(n_dimensions, samples, parameter_support):
     """
 
@@ -459,6 +463,7 @@ def get_sobol_samples(n_dimensions, samples, parameter_support):
 
     return sobol_samples
 
+numba.jit()
 def get_unirand_samples(n_dimensions, samples, parameter_support):
     """
 
@@ -477,7 +482,7 @@ def get_unirand_samples(n_dimensions, samples, parameter_support):
 
     return unirand_samples
 
-
+numba.jit()
 def get_round_selections(evaluated_set_X, evaluated_set_y,
                          unevaluated_set_X,
                          predicted_positives, num_predicted_positives,
@@ -518,7 +523,7 @@ def get_round_selections(evaluated_set_X, evaluated_set_y,
 
     return evaluated_set_X, evaluated_set_y, unevaluated_set_X
 
-
+numba.jit()
 def get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
                            unevaluated_X, calibration_threshold,
                            number_of_new_labels):
@@ -539,3 +544,5 @@ def get_new_labels_entropy(evaluated_set_X, evaluated_set_y,
                                   replace=False,
                                   p=y_hat_entropy)
     return selections
+
+print ("Imported successfully")
